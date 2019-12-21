@@ -2,12 +2,17 @@
 #include <time.h>
 
 //Nombre de block device
-#define N 1048576
+#define BLOCK 4096
+//Nombre de thread device
+#define THREAD 4096
 
 //les fonctions avec __global__ seront execute sur la CG (device)
 __global__ void mult(int* a, int* b, int* c){
-    //blockIdx.x précise le numéro du block actuel
-    c[threadIdx.x] = a[threadIdx.x] * b[threadIdx.x];
+    //Tableau des index pour deux blocks et trois threads:
+    // [t1,t2,t3][t1,t2,t3]
+    int index = threadIdx.x + blockIdx.x * blockDim.x;
+
+    c[index] = a[index] * b[index];
 }
 
 void random_ints(int* tab, int n){
@@ -20,6 +25,7 @@ void random_ints(int* tab, int n){
 
 //Le reste est compile avec le compilateur de base genre gcc
 int main(void) {
+    int N = BLOCK * THREAD;
     int size = N * sizeof(int);
     int i;
     clock_t time1, time2;
@@ -48,11 +54,10 @@ int main(void) {
     cudaMemcpy(d_a, h_a, size, cudaMemcpyHostToDevice);
     cudaMemcpy(d_b, h_b, size, cudaMemcpyHostToDevice);
 
-    //Calcul de somme en parallèle
-    //le N précise d'executer N thread en parallele
+    //Calcul de multiplication en parallèle
     printf("Calcul en parallele:");
     time1 = clock();
-    mult<<<1,N>>>(d_a, d_b, d_c);
+    mult<<<BLOCK,THREAD>>>(d_a, d_b, d_c);
     time2 = clock();
     printf("%d\n", time2-time1);
 
