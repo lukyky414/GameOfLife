@@ -4,6 +4,8 @@
 #define NB_COLONNE 256
 #define NB_LIGNE 256
 #define NB_THREAD 1024
+#define FPS 60
+#define DEVICE 0 //see the temp.cu for the device number
 
 //Epoque calcule sur le device. Un appel a cette fonction par pixel
 __global__ void epoque(char* in, char* out){
@@ -79,6 +81,7 @@ void affichage(char* map){
 
 //Le reste est compile avec le compilateur de base genre gcc
 int main(void) {
+
     //Informations sur la map
     int N = NB_COLONNE * NB_LIGNE;
     int size = N * sizeof(int);
@@ -86,13 +89,15 @@ int main(void) {
     //Variables de boucles
     int k=0, state = 0;
     clock_t t, t_1;
+    double max_time = CLOCKS_PER_SEC / 60;
 
     //Variables présente sur le processeur (host)
     char *map;
 
     //Pointeurs pour le device memory
     char *map1, *map2;
-    
+
+
     //Alloue la mémoire device
     printf("Allocation Device\n");
     cudaMalloc((void**) &map1, size);
@@ -104,15 +109,15 @@ int main(void) {
     //affichage(map);
 
     //Copie les valeurs dans la device memory
-    printf("Copie:\n");
+    printf("Copie\n");
     cudaMemcpy(map1, map, size, cudaMemcpyHostToDevice);
 
     cudaDeviceSynchronize();
 
-    printf("Epoques:");
+    printf("Epoques\n");
     t_1 = clock();
-    t = (clock()-t_1)/CLOCKS_PER_SEC;
-    while(t < 1){
+    t = clock()-t_1;
+    while(t < max_time){
         if(state){
             state = 0;
             epoque<<<NB_LIGNE,NB_THREAD>>>(map2, map1);
@@ -121,10 +126,10 @@ int main(void) {
             state = 1;
             epoque<<<NB_LIGNE,NB_THREAD>>>(map1, map2);
         }
-        t = (clock()-t_1)/CLOCKS_PER_SEC;
+        t = clock()-t_1;
         k++;
     }
-    printf("%d in %.3fs\n", k, (double)t);
+    printf("  %d in %.3fs\n", k, (double)t/CLOCKS_PER_SEC);
 
     cudaDeviceSynchronize();
 
