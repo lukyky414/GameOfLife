@@ -1,5 +1,7 @@
 #include <GL/glut.h>
 
+int my_window;
+
 //Affichage de la fenetre.
 void renderScene(void){
     glClear(GL_COLOR_BUFFER_BIT);
@@ -13,25 +15,26 @@ void renderScene(void){
     glutSwapBuffers();
 }
 
-
+void keyboardHandler(unsigned char key, int x, int y){
+    if(key==27) exit(0);
+}
 
 int main(int argc, char** argv){
     //init glut
         glutInit(&argc, argv);
-
         //Init windows
         glutInitWindowPosition(10,10);
-        glutInitWindowSize(500,400);
-
+        glutInitWindowSize(1920,1080);
         glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE /* | GLUT_DEPTH*/ );
-
-        glutCreateWindow("Ma première fenêtre!");
+        my_window = glutCreateWindow("Ma première fenêtre!");
+        glutFullScreen();
 
     //event callbacks
-        glutDisplayFunc(&renderScene);
+    glutDisplayFunc(renderScene);
+    glutKeyboardFunc(keyboardHandler);
 
     //windows process
-        glutMainLoop();
+    glutMainLoop();
 
     return 0;
 }
