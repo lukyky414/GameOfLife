@@ -1,11 +1,22 @@
+#include <GL/glut.h>
 #include <stdio.h>
 #include <time.h>
 
-#define NB_COLONNE 256
-#define NB_LIGNE 256
+#define NB_COLONNE 1920
+#define NB_LIGNE 1080
 #define NB_THREAD 1024
 #define FPS 60
 #define DEVICE 0 //see the temp.cu for the device number
+
+bool state;
+int my_window;
+int N;
+int size;
+double max_time;
+
+//Pointeurs pour le device memory
+char *map1, *map2;
+
 
 //Epoque calcule sur le device. Un appel a cette fonction par pixel
 __global__ void epoque(char* in, char* out){
@@ -17,7 +28,7 @@ __global__ void epoque(char* in, char* out){
     int t_2ligne = NB_COLONNE * 2;
     int out_line = y * NB_COLONNE;
 
-    int somme = 0;
+    char somme;
 
     __shared__ char ligne[NB_COLONNE * 3];
 
@@ -36,6 +47,7 @@ __global__ void epoque(char* in, char* out){
 
     x = first_x;
     while(x < NB_COLONNE){
+        somme = 0;
         if(x > 1)
             somme += ligne[x-1] + ligne[x-1 + NB_COLONNE] + ligne[x-1 + t_2ligne];
         somme += ligne[x] + ligne[x + t_2ligne];
@@ -70,7 +82,7 @@ void random_map(char* map, int n){
         map[i] = rand()%2;
 }
 
-void affichage(char* map){
+void affichageConsole(char* map){
     int i, j;
     for(j=0; j<NB_LIGNE; j++){
         for(i=0; i<NB_COLONNE; i++)
@@ -79,24 +91,60 @@ void affichage(char* map){
     }
 }
 
-//Le reste est compile avec le compilateur de base genre gcc
-int main(void) {
+//Affichage de la fenetre.
+void renderScene(void){
+    clock_t t, t_1;
+    int k = 0;
 
+    t_1 = clock();
+    do{
+        state = !state;
+
+        if(state)
+            epoque<<<NB_LIGNE,NB_THREAD>>>(map1, map2);
+        else
+            epoque<<<NB_LIGNE,NB_THREAD>>>(map2, map1);
+        cudaDeviceSynchronize();
+        
+        t = clock()-t_1;
+        k++;
+    }while(t < max_time);
+    printf("%d époques en %.3fs\n", k, (double)t/CLOCKS_PER_SEC);
+
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBegin(GL_TRIANGLES);
+        glVertex3f(-0.5,-0.5,0.0);
+        glVertex3f(0.5,0.0,0.0);
+        glVertex3f(0.0,0.5,0.0);
+    glEnd();
+
+    glutSwapBuffers();
+}
+
+void keyboardHandler(unsigned char key, int x, int y){
+    if(key==27){
+        cudaDeviceSynchronize();
+
+        cudaFree(map1);
+        cudaFree(map2);
+
+        exit(0);
+    }
+}
+
+//Le reste est compile avec le compilateur de base genre gcc
+int main(int argc, char** argv) {
     //Informations sur la map
-    int N = NB_COLONNE * NB_LIGNE;
-    int size = N * sizeof(int);
+    N = NB_COLONNE * NB_LIGNE;
+    size = N * sizeof(char);
 
     //Variables de boucles
-    int k=0, state = 0;
-    clock_t t, t_1;
-    double max_time = CLOCKS_PER_SEC / 60;
+    max_time = CLOCKS_PER_SEC / FPS;
+    state = false;
 
     //Variables présente sur le processeur (host)
     char *map;
-
-    //Pointeurs pour le device memory
-    char *map1, *map2;
-
 
     //Alloue la mémoire device
     printf("Allocation Device\n");
@@ -106,47 +154,38 @@ int main(void) {
     //Alloue la mémoire host
     printf("Allocation Host\n");
     map = (char*) malloc (size); random_map(map,N);
-    //affichage(map);
 
     //Copie les valeurs dans la device memory
-    printf("Copie\n");
+    printf("Copie sur device\n");
     cudaMemcpy(map1, map, size, cudaMemcpyHostToDevice);
 
     cudaDeviceSynchronize();
 
-    printf("Epoques\n");
-    t_1 = clock();
-    t = clock()-t_1;
-    while(t < max_time){
-        if(state){
-            state = 0;
-            epoque<<<NB_LIGNE,NB_THREAD>>>(map2, map1);
-        }
-        else{
-            state = 1;
-            epoque<<<NB_LIGNE,NB_THREAD>>>(map1, map2);
-        }
-        t = clock()-t_1;
-        k++;
-    }
-    printf("  %d in %.3fs\n", k, (double)t/CLOCKS_PER_SEC);
-
-    cudaDeviceSynchronize();
-
-    //Récupération des donnes du device vers le host
-    if(state)
-        cudaMemcpy(map, map2, size, cudaMemcpyDeviceToHost);
-    else
-        cudaMemcpy(map, map1, size, cudaMemcpyDeviceToHost);
-    
-    cudaDeviceSynchronize();
-    //affichage(map);
-
-    //Désallocation du device memory
-    cudaFree(map1); cudaFree(map2);
-
     //Désallocation du host memory
     free(map);
+
+    printf("Execution\n");
+    
+    //init glut
+    glutInit(&argc, argv);
+    //Init windows
+    glutInitWindowPosition(10,10);
+    glutInitWindowSize(1920,1080);
+    glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);
+    my_window = glutCreateWindow("Game Of Life");
+    glutFullScreen();
+
+    //event callbacks
+    glutDisplayFunc(renderScene);
+    glutKeyboardFunc(keyboardHandler);
+
+    //windows process
+    glutMainLoop();
+
+    cudaDeviceSynchronize();
+    
+    //Désallocation du device memory
+    cudaFree(map1); cudaFree(map2);
 
     return 0;
 }
