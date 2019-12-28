@@ -12,7 +12,7 @@
 #define NB_THREAD 1024
 #define FPS 60
 #define DEVICE 0 //see the temp.cu for the device number
-
+#define FAST_SPEED
 
 bool state;
 int my_window;
@@ -21,7 +21,7 @@ int size;
 double max_time;
 
 //Pointeurs pour le device memory
-char *map1, *map2;
+char *map1, *map2, *host_map;
 
 //Pour l'affichage
 GLuint gl_pixelBufferObject;
@@ -174,7 +174,7 @@ void renderScene(void){
         t = clock()-t_1;
     }while(t < max_time);
 #endif
-    printf("  Epoques en %.5fs (%d), result in %s\n", (double)(clock()-t_e)/CLOCKS_PER_SEC, k, (state?"map2":"map1"));
+    printf("  Epoques en %.5fs (%d)\n", (double)(clock()-t_e)/CLOCKS_PER_SEC, k);
 
     //Reset du timer ici. On prend en compte l'affichage pour le calcul du temps.
     t_1 = clock();
@@ -182,37 +182,37 @@ void renderScene(void){
     //Temps pour l'Affichage
     t_a = clock();
 
+    //Affichage
+
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_TEXTURE_2D);
+    //Bind la texture
+    glBindTexture(GL_TEXTURE_2D, gl_texturePtr);
+    //Bind le PBO
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
+
     //Calcul de l'image
     //On réserve le PBO
     cudaGraphicsMapResources(1, &cudaPboResource, 0);
     cudaGraphicsResourceGetMappedPointer((void**)&d_textureBufferData, &num_bytes, cudaPboResource);
+
     if(state)
         affichageCuda<<<NB_LIGNE,NB_THREAD>>>(map2, d_textureBufferData);
     else
         affichageCuda<<<NB_LIGNE,NB_THREAD>>>(map1, d_textureBufferData);
-    cudaGraphicsUnmapResources(1, &cudaPboResource, 0);
 
-
-    //Affichage
-    glColor3f(1.0f, 1.0f, 1.0f);
-    glBindTexture(GL_TEXTURE_2D, gl_texturePtr);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
-   
+    //Copier les pixels du PBO
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, NB_COLONNE, NB_LIGNE, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+
+    cudaGraphicsUnmapResources(1, &cudaPboResource, 0);
    
+    //On dessine la texture à l'écran
     glBegin(GL_QUADS);
-    
-    glTexCoord2f(0.0f, 0.0f);
-    glVertex2f(-1.0f, 1.0f);
 
-    glTexCoord2f(1.0f, 0.0f);
-    glVertex2f(1.0f, 1.0f);
-
-    glTexCoord2f(1.0f, 1.0f);
-    glVertex2f(1.0f, -1.0f);
-
-    glTexCoord2f(0.0f, 1.0f);
-    glVertex2f(-1.0f, -1.0f);
+    glTexCoord2f(0.0f, 0.0f);    glVertex2f(0.0f, 0.0f);
+    glTexCoord2f(1.0f, 0.0f);    glVertex2f(float(NB_COLONNE), 0.0f);
+    glTexCoord2f(1.0f, 1.0f);    glVertex2f(float(NB_COLONNE), float(NB_LIGNE));
+    glTexCoord2f(0.0f, 1.0f);    glVertex2f(0.0f, float(NB_LIGNE));
 
     glEnd();
    
@@ -226,9 +226,12 @@ void renderScene(void){
 void exit_function(){
     printf("Exiting...\n");
     cudaDeviceSynchronize();
+    cudaGraphicsUnregisterResource(cudaPboResource);
 
     cudaFree(map1);
     cudaFree(map2);
+
+    free(host_map);
 
     exit(0);
 }
@@ -252,16 +255,17 @@ bool initialisation_opengl(int& argc, char** argv){
 
     //event callbacks
     glutDisplayFunc(renderScene);
+    glutIdleFunc(renderScene);
     glutKeyboardFunc(keyboardHandler);
 
 
     //Préparation de la texture
-    //Texture sur host
-    uchar4* h_textureBufferData = new uchar4[NB_COLONNE * NB_LIGNE];
     
     glewInit();
     //Enable server side capabilities
     glEnable(GL_TEXTURE_2D);
+
+    
     //On génère une texture dans le pointeur
     glGenTextures(1, &gl_texturePtr);
     //Bind le type de texture
@@ -272,10 +276,10 @@ bool initialisation_opengl(int& argc, char** argv){
         //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
         
         //Si on zoom sur la texture, on utilise le nearest. (pas de flou, gros pixel)
-        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     //Défini la texture. Une GL_TEXTURE_2D, level de base, RGB avec Alpha sur 8bit, taille, pas de bord, pixel format rgba, pixel type, pointeur data
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, NB_COLONNE, NB_LIGNE, 0, GL_RGBA, GL_UNSIGNED_BYTE, h_textureBufferData);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, NB_COLONNE, NB_LIGNE, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 
 
     //Génère les buffers. Il y en as 1.
@@ -285,8 +289,7 @@ bool initialisation_opengl(int& argc, char** argv){
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
 
     //Créer et initialise le buffer. On copye h_textureBufferData dans le buffer d'openGL
-    //glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, NB_COLONNE * NB_LIGNE * sizeof(uchar4), h_textureBufferData, GL_STREAM_COPY);
-    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, NB_COLONNE * NB_LIGNE * sizeof(uchar4), nullptr, GL_STREAM_COPY);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, NB_COLONNE * NB_LIGNE * sizeof(uchar4), 0, GL_STREAM_COPY);
 
     //Créer le Pixel Buffer Object. Cuda va écrire dedans, OpenGL va l'afficher. Rien ne passe par le CPU.
     cudaError result = cudaGraphicsGLRegisterBuffer(&cudaPboResource, gl_pixelBufferObject, cudaGraphicsMapFlagsWriteDiscard);
@@ -295,6 +298,12 @@ bool initialisation_opengl(int& argc, char** argv){
     //On un-bind tous les buffer & textures.
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    //Change les coordonnees pour l'affichage
+    glMatrixMode(GL_PROJECTION);
+    glOrtho(0, NB_COLONNE, 0, NB_LIGNE, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+
     return true;
 }
 
@@ -308,9 +317,6 @@ int main(int argc, char** argv) {
     max_time = CLOCKS_PER_SEC / FPS;
     state = false;
 
-    //Variables présente sur le processeur (host)
-    char *map;
-
     //Alloue la mémoire device
     printf("Allocation Device\n");
     cudaMalloc((void**) &map1, size);
@@ -319,18 +325,18 @@ int main(int argc, char** argv) {
 
     //Alloue la mémoire host
     printf("Allocation Host\n");
-    map = (char*) malloc (size); random_map(map,N);
+    host_map = (char*) malloc (size); random_map(host_map,N);
     
 
     //Copie les valeurs dans la device memory
     printf("Copie sur device\n");
-    cudaMemcpy(map1, map, size, cudaMemcpyHostToDevice);
+    cudaMemcpy(map1, host_map, size, cudaMemcpyHostToDevice);
     
     //Attendre que la copie se termine
     cudaDeviceSynchronize();
 
     //Désallocation du host memory
-    free(map);
+    //free(map);
 
     printf("Initialisation de la fenêtre\n");
     if(!initialisation_opengl(argc, argv))
