@@ -13,6 +13,7 @@
 #define FPS 60
 #define DEVICE 0 //see the temp.cu for the device number
 
+
 bool state;
 int my_window;
 int N;
@@ -108,7 +109,7 @@ __global__ void affichageCuda(char* map, uchar4* texture){
     x = first_x;
     while(x < NB_COLONNE){
         pos = x + out_line;
-        if(map[pos] == 1){
+        if(map[pos] == (char)1){
             texture[pos].x = 255;
             texture[pos].y = 255;
             texture[pos].z = 255;
@@ -173,7 +174,7 @@ void renderScene(void){
         t = clock()-t_1;
     }while(t < max_time);
 #endif
-    printf("  Epoques en %.5fs (%d)\n", (double)(clock()-t_e)/CLOCKS_PER_SEC, k);
+    printf("  Epoques en %.5fs (%d), result in %s\n", (double)(clock()-t_e)/CLOCKS_PER_SEC, k, (state?"map2":"map1"));
 
     //Reset du timer ici. On prend en compte l'affichage pour le calcul du temps.
     t_1 = clock();
@@ -185,7 +186,10 @@ void renderScene(void){
     //On réserve le PBO
     cudaGraphicsMapResources(1, &cudaPboResource, 0);
     cudaGraphicsResourceGetMappedPointer((void**)&d_textureBufferData, &num_bytes, cudaPboResource);
-    affichageCuda<<<NB_LIGNE,NB_THREAD>>>(map1, d_textureBufferData);
+    if(state)
+        affichageCuda<<<NB_LIGNE,NB_THREAD>>>(map2, d_textureBufferData);
+    else
+        affichageCuda<<<NB_LIGNE,NB_THREAD>>>(map1, d_textureBufferData);
     cudaGraphicsUnmapResources(1, &cudaPboResource, 0);
 
 
@@ -197,14 +201,19 @@ void renderScene(void){
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, NB_COLONNE, NB_LIGNE, GL_RGBA, GL_UNSIGNED_BYTE, 0);
    
     glBegin(GL_QUADS);
+    
     glTexCoord2f(0.0f, 0.0f);
-    glVertex2f(0.0f, 0.0f);
+    glVertex2f(-1.0f, 1.0f);
+
     glTexCoord2f(1.0f, 0.0f);
-    glVertex2f(float(NB_COLONNE), 0.0f);
+    glVertex2f(1.0f, 1.0f);
+
     glTexCoord2f(1.0f, 1.0f);
-    glVertex2f(float(NB_COLONNE), float(NB_LIGNE));
+    glVertex2f(1.0f, -1.0f);
+
     glTexCoord2f(0.0f, 1.0f);
-    glVertex2f(0.0f, float(NB_LIGNE));
+    glVertex2f(-1.0f, -1.0f);
+
     glEnd();
    
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
