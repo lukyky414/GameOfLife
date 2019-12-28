@@ -12,7 +12,7 @@
 #define NB_THREAD 1024
 #define FPS 60
 #define DEVICE 0 //see the temp.cu for the device number
-#define FAST_SPEED
+//#define FAST_SPEED
 
 bool state;
 int my_window;
@@ -127,10 +127,19 @@ __global__ void affichageCuda(char* map, uchar4* texture){
 //Générer une carte de départ aléatoire
 void random_map(char* map, int n){
     int i;
-    srand (time (NULL));
 
-    for(i=0; i<n; i++)
-        map[i] = rand()%2;
+    for(i=0; i<n; i++){
+        if(rand()%100 > 50)
+            map[i] = 1;
+        else
+            map[i] = 0;
+    }
+}
+
+void reset(){
+    state = false;
+    random_map(host_map,N);
+    cudaMemcpy(map1, host_map, size, cudaMemcpyHostToDevice);
 }
 
 //Afficher la carte dans la console. Un # représente une case vivante, un < > une case morte.
@@ -154,7 +163,7 @@ void renderScene(void){
     size_t num_bytes;
 
     //Temps pour les Epoques
-    t_e = clock();
+    //t_e = clock();
 
     //Si FAST_SPEED est défini, on effectue un maximum d'époques entre deux frames, sinon une seul époque par frame
 #ifdef FAST_SPEED
@@ -166,7 +175,6 @@ void renderScene(void){
             epoque<<<NB_LIGNE,NB_THREAD>>>(map1, map2);
         else
             epoque<<<NB_LIGNE,NB_THREAD>>>(map2, map1);
-        cudaDeviceSynchronize();
         
         k++;
 
@@ -174,13 +182,12 @@ void renderScene(void){
         t = clock()-t_1;
     }while(t < max_time);
 #endif
-    printf("  Epoques en %.5fs (%d)\n", (double)(clock()-t_e)/CLOCKS_PER_SEC, k);
-
+    //printf("  Epoques en %.5fs (%d)\n", (double)(clock()-t_e)/CLOCKS_PER_SEC, k);
     //Reset du timer ici. On prend en compte l'affichage pour le calcul du temps.
     t_1 = clock();
 
     //Temps pour l'Affichage
-    t_a = clock();
+    //t_a = clock();
 
     //Affichage
 
@@ -220,7 +227,7 @@ void renderScene(void){
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glutSwapBuffers();
-    printf("Affichage en %.5fs\n", (double)(clock()-t_a)/CLOCKS_PER_SEC);
+    //printf("Affichage en %.5fs\n", (double)(clock()-t_a)/CLOCKS_PER_SEC);
 }
 
 void exit_function(){
@@ -241,6 +248,9 @@ void keyboardHandler(unsigned char key, int x, int y){
     //Permet de quitter le programme
     if(key==27){
         exit_function();
+    }
+    if(key=='r'){
+        reset();
     }
 }
 
@@ -309,6 +319,7 @@ bool initialisation_opengl(int& argc, char** argv){
 
 //Le reste est compile avec le compilateur de base genre gcc
 int main(int argc, char** argv) {
+    srand (time (NULL));
     //Informations sur la map
     N = NB_COLONNE * NB_LIGNE;
     size = N * sizeof(char);
@@ -325,27 +336,22 @@ int main(int argc, char** argv) {
 
     //Alloue la mémoire host
     printf("Allocation Host\n");
-    host_map = (char*) malloc (size); random_map(host_map,N);
-    
-
-    //Copie les valeurs dans la device memory
-    printf("Copie sur device\n");
-    cudaMemcpy(map1, host_map, size, cudaMemcpyHostToDevice);
+    host_map = (char*) malloc (size);
     
     //Attendre que la copie se termine
     cudaDeviceSynchronize();
 
     //Désallocation du host memory
-    //free(map);
 
-    printf("Initialisation de la fenêtre\n");
+    //printf("Initialisation de la fenêtre\n");
     if(!initialisation_opengl(argc, argv))
         exit_function();
 
     //windows process
     printf("Execution\n");
+    reset();
     glutMainLoop();
-
+    
     //Pas de désallocation ici, le programme quitte dans le keyboard Handler.
     return 1;
 }
