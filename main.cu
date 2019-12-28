@@ -1,5 +1,7 @@
 #include <GL/glut.h>
 
+#include <stdio.h>
+
 int my_window;
 
 //Affichage de la fenetre.
@@ -13,6 +15,7 @@ void renderScene(void){
     glEnd();
 
     glutSwapBuffers();
+    printf("Frame.\n");
 }
 
 void keyboardHandler(unsigned char key, int x, int y){
@@ -31,6 +34,7 @@ int main(int argc, char** argv){
 
     //event callbacks
     glutDisplayFunc(renderScene);
+    glutIdleFunc(renderScene);
     glutKeyboardFunc(keyboardHandler);
 
     //windows process
