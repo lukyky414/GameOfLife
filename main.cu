@@ -1,4 +1,9 @@
+#include <GL/glew.h>
 #include <GL/glut.h>
+
+#include <cuda_gl_interop.h>
+
+#include <unistd.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -17,51 +22,67 @@ double max_time;
 //Pointeurs pour le device memory
 char *map1, *map2;
 
+//Pour l'affichage
+GLuint gl_pixelBufferObject;
+GLuint gl_texturePtr;
+cudaGraphicsResource* cudaPboResource;
+uchar4* d_textureBufferData = nullptr;
+
 
 //Epoque calcule sur le device. Un appel a cette fonction par pixel
 __global__ void epoque(char* in, char* out){
-    int first_x = threadIdx.x;
-    int x;
-    int y = blockIdx.x;
+    uint first_x = threadIdx.x;
+    uint x;
+    uint y = blockIdx.x;
 
     //Pour éviter de refaire les multiplication
-    int t_2ligne = NB_COLONNE * 2;
-    int out_line = y * NB_COLONNE;
+    uint t_2ligne = NB_COLONNE * 2;
+    uint out_line = y * NB_COLONNE;
 
     char somme;
 
+    //La mémoire shared est beaucoup plus rapide que la globale (map1 et map2). Elle est partagé entre tous les thread d'un block.
+    //Elle est cependant bien plus petite.
     __shared__ char ligne[NB_COLONNE * 3];
 
     //Recopier la ligne du dessus, la ligne actuel, et celle du dessous pour les calculs.
     x = first_x;
     while(x < NB_COLONNE){
-        ligne[x] = ( y>=0 ? in[x + (y-1)*NB_COLONNE] : (char)0);
-        ligne[x + NB_COLONNE] = in[x + y*NB_COLONNE];
+        //Si la ligne du dessus existe
+        ligne[x] = ( y>0 ? in[x + (y-1)*NB_COLONNE] : (char)0);
+        //Copie de la case étudié
+        ligne[x + NB_COLONNE] = in[x + out_line];
+        //Si la ligne du dessous existe
         ligne[x + t_2ligne] = (y<NB_LIGNE? in[x + (y+1)*NB_COLONNE] : (char)0);
 
+        //Lire plusieurs cases lorsque que l'image est plus grande que le nombre de thread max
         x += NB_THREAD;
     }
 
     //Attendre que le block ait finis de recopier les lignes
     __syncthreads();
 
+
     x = first_x;
     while(x < NB_COLONNE){
         somme = 0;
-        if(x > 1)
-            somme += ligne[x-1] + ligne[x-1 + NB_COLONNE] + ligne[x-1 + t_2ligne];
-        somme += ligne[x] + ligne[x + t_2ligne];
-        if(x < NB_COLONNE-1)
-            somme += ligne[x+1] + ligne[x+1 + NB_COLONNE] + ligne[x+1 + t_2ligne];
+        //La ligne au dessus et au dessous existe avec une valeur par défaut si hors de l'image.
 
-        //case vivante
+        //Test si la colonne gauche est dans l'image
+        if(x > 1) somme += ligne[x-1] + ligne[x-1 + NB_COLONNE] + ligne[x-1 + t_2ligne];
+        //Colonne de la case étudiée
+        somme += ligne[x] + ligne[x + t_2ligne];
+        //Test si la colonne droite est dans l'image
+        if(x < NB_COLONNE-1) somme += ligne[x+1] + ligne[x+1 + NB_COLONNE] + ligne[x+1 + t_2ligne];
+
+        //Si la case étudiée est vivante
         if(ligne[x + NB_COLONNE] == 1){
             if(somme == 3 || somme == 2)
                 out[x + out_line] = (char)1;
             else
                 out[x + out_line] = (char)0;
         }
-        //case morte
+        //Si la case étudiée est morte
         else{
             if(somme == 3)
                 out[x + out_line] = (char)1;
@@ -69,11 +90,40 @@ __global__ void epoque(char* in, char* out){
                 out[x + out_line] = (char)0;
         }
 
+        //Etudier plusieurs cases lorsque l'image est plus grande que le nombre de thread max
         x += NB_THREAD;
     }
 }
 
-//Générer une carte de départ
+//Calcule la texture à afficher
+__global__ void affichageCuda(char* map, uchar4* texture){
+    uint first_x = threadIdx.x;
+    uint x;
+    uint y = blockIdx.x;
+
+    //Pour éviter de refaire les multiplication
+    uint out_line = y * NB_COLONNE;
+    uint pos;
+
+    x = first_x;
+    while(x < NB_COLONNE){
+        pos = x + out_line;
+        if(map[pos] == 1){
+            texture[pos].x = 255;
+            texture[pos].y = 255;
+            texture[pos].z = 255;
+        }
+        else{
+            texture[pos].x = 0;
+            texture[pos].y = 0;
+            texture[pos].z = 0;
+        }
+
+        x+=NB_THREAD;
+    }
+}
+
+//Générer une carte de départ aléatoire
 void random_map(char* map, int n){
     int i;
     srand (time (NULL));
@@ -82,6 +132,8 @@ void random_map(char* map, int n){
         map[i] = rand()%2;
 }
 
+//Afficher la carte dans la console. Un # représente une case vivante, un < > une case morte.
+//Un saut de ligne sépare chaque ligne. Si le lecteur (console) affiche automatiquement un saut de ligne cet affichage est inutile quand l'image est trop grande.
 void affichageConsole(char* map){
     int i, j;
     for(j=0; j<NB_LIGNE; j++){
@@ -91,13 +143,22 @@ void affichageConsole(char* map){
     }
 }
 
-//Affichage de la fenetre.
+clock_t t_1 = clock();
+//Mis à jours de la fenêtre.
+//Déclenche des époques et le dessin de l'image.
 void renderScene(void){
-    clock_t t, t_1;
+    static clock_t t_1 = clock();
+    clock_t t, t_e, t_a;
     int k = 0;
+    size_t num_bytes;
 
-    t_1 = clock();
+    //Temps pour les Epoques
+    t_e = clock();
+
+    //Si FAST_SPEED est défini, on effectue un maximum d'époques entre deux frames, sinon une seul époque par frame
+#ifdef FAST_SPEED
     do{
+#endif
         state = !state;
 
         if(state)
@@ -106,31 +167,126 @@ void renderScene(void){
             epoque<<<NB_LIGNE,NB_THREAD>>>(map2, map1);
         cudaDeviceSynchronize();
         
-        t = clock()-t_1;
         k++;
+
+#ifdef FAST_SPEED
+        t = clock()-t_1;
     }while(t < max_time);
-    printf("%d époques en %.3fs\n", k, (double)t/CLOCKS_PER_SEC);
+#endif
+    printf("  Epoques en %.5fs (%d)\n", (double)(clock()-t_e)/CLOCKS_PER_SEC, k);
 
-    glClear(GL_COLOR_BUFFER_BIT);
+    //Reset du timer ici. On prend en compte l'affichage pour le calcul du temps.
+    t_1 = clock();
 
-    glBegin(GL_TRIANGLES);
-        glVertex3f(-0.5,-0.5,0.0);
-        glVertex3f(0.5,0.0,0.0);
-        glVertex3f(0.0,0.5,0.0);
+    //Temps pour l'Affichage
+    t_a = clock();
+
+    //Calcul de l'image
+    //On réserve le PBO
+    cudaGraphicsMapResources(1, &cudaPboResource, 0);
+    cudaGraphicsResourceGetMappedPointer((void**)&d_textureBufferData, &num_bytes, cudaPboResource);
+    affichageCuda<<<NB_LIGNE,NB_THREAD>>>(map1, d_textureBufferData);
+    cudaGraphicsUnmapResources(1, &cudaPboResource, 0);
+
+
+    //Affichage
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glBindTexture(GL_TEXTURE_2D, gl_texturePtr);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
+   
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, NB_COLONNE, NB_LIGNE, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+   
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex2f(0.0f, 0.0f);
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex2f(float(NB_COLONNE), 0.0f);
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex2f(float(NB_COLONNE), float(NB_LIGNE));
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex2f(0.0f, float(NB_LIGNE));
     glEnd();
+   
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     glutSwapBuffers();
+    printf("Affichage en %.5fs\n", (double)(clock()-t_a)/CLOCKS_PER_SEC);
 }
 
+void exit_function(){
+    printf("Exiting...\n");
+    cudaDeviceSynchronize();
+
+    cudaFree(map1);
+    cudaFree(map2);
+
+    exit(0);
+}
+
+//Gère les commandes clavier
 void keyboardHandler(unsigned char key, int x, int y){
+    //Permet de quitter le programme
     if(key==27){
-        cudaDeviceSynchronize();
-
-        cudaFree(map1);
-        cudaFree(map2);
-
-        exit(0);
+        exit_function();
     }
+}
+
+bool initialisation_opengl(int& argc, char** argv){
+    //init glut
+    glutInit(&argc, argv);
+    //Init windows
+    glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);
+    glutInitWindowSize(1920,1080);
+    my_window = glutCreateWindow("Game Of Life");
+    glutFullScreen();
+
+    //event callbacks
+    glutDisplayFunc(renderScene);
+    glutKeyboardFunc(keyboardHandler);
+
+
+    //Préparation de la texture
+    //Texture sur host
+    uchar4* h_textureBufferData = new uchar4[NB_COLONNE * NB_LIGNE];
+    
+    glewInit();
+    //Enable server side capabilities
+    glEnable(GL_TEXTURE_2D);
+    //On génère une texture dans le pointeur
+    glGenTextures(1, &gl_texturePtr);
+    //Bind le type de texture
+    glBindTexture(GL_TEXTURE_2D, gl_texturePtr);
+    //Quelques paramètres
+        //Permet une texture cyclique
+        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+        
+        //Si on zoom sur la texture, on utilise le nearest. (pas de flou, gros pixel)
+        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    //Défini la texture. Une GL_TEXTURE_2D, level de base, RGB avec Alpha sur 8bit, taille, pas de bord, pixel format rgba, pixel type, pointeur data
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, NB_COLONNE, NB_LIGNE, 0, GL_RGBA, GL_UNSIGNED_BYTE, h_textureBufferData);
+
+
+    //Génère les buffers. Il y en as 1.
+    glGenBuffers(1, &gl_pixelBufferObject);
+
+    //Permet de bind le buffer et travailler dessus ensuite
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
+
+    //Créer et initialise le buffer. On copye h_textureBufferData dans le buffer d'openGL
+    //glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, NB_COLONNE * NB_LIGNE * sizeof(uchar4), h_textureBufferData, GL_STREAM_COPY);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, NB_COLONNE * NB_LIGNE * sizeof(uchar4), nullptr, GL_STREAM_COPY);
+
+    //Créer le Pixel Buffer Object. Cuda va écrire dedans, OpenGL va l'afficher. Rien ne passe par le CPU.
+    cudaError result = cudaGraphicsGLRegisterBuffer(&cudaPboResource, gl_pixelBufferObject, cudaGraphicsMapFlagsWriteDiscard);
+    if (result != cudaSuccess) return false;
+
+    //On un-bind tous les buffer & textures.
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return true;
 }
 
 //Le reste est compile avec le compilateur de base genre gcc
@@ -150,42 +306,31 @@ int main(int argc, char** argv) {
     printf("Allocation Device\n");
     cudaMalloc((void**) &map1, size);
     cudaMalloc((void**) &map2, size);
+    
 
     //Alloue la mémoire host
     printf("Allocation Host\n");
     map = (char*) malloc (size); random_map(map,N);
+    
 
     //Copie les valeurs dans la device memory
     printf("Copie sur device\n");
     cudaMemcpy(map1, map, size, cudaMemcpyHostToDevice);
-
+    
+    //Attendre que la copie se termine
     cudaDeviceSynchronize();
 
     //Désallocation du host memory
     free(map);
 
-    printf("Execution\n");
-    
-    //init glut
-    glutInit(&argc, argv);
-    //Init windows
-    glutInitWindowPosition(10,10);
-    glutInitWindowSize(1920,1080);
-    glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);
-    my_window = glutCreateWindow("Game Of Life");
-    glutFullScreen();
-
-    //event callbacks
-    glutDisplayFunc(renderScene);
-    glutKeyboardFunc(keyboardHandler);
+    printf("Initialisation de la fenêtre\n");
+    if(!initialisation_opengl(argc, argv))
+        exit_function();
 
     //windows process
+    printf("Execution\n");
     glutMainLoop();
 
-    cudaDeviceSynchronize();
-    
-    //Désallocation du device memory
-    cudaFree(map1); cudaFree(map2);
-
-    return 0;
+    //Pas de désallocation ici, le programme quitte dans le keyboard Handler.
+    return 1;
 }
