@@ -7,21 +7,25 @@
 #include <stdio.h>
 #include <time.h>
 
-#define NB_COLONNE 1920
-#define NB_LIGNE 1080
-#define NB_THREAD 1024
-#define FPS 60
-#define DEVICE 0 //see the temp.cu for the device number
-//#define FAST_SPEED
+#define SCREEN_COL 1920
+#define SCREEN_ROW 1080
 
+#define TEXTUR_COL 4096
+#define TEXTUR_ROW 2048
+
+#define NB_THREAD 1024
+#define VOISINAGE 3
+
+#define DEVICE 0 //see the temp.cu for the device number
+
+//Pour les boucles
 bool state;
 int my_window;
-int N;
 int size;
-double max_time;
+int cell_per_thread;
 
-//Pointeurs pour le device memory
-char *map1, *map2, *host_map;
+//Pointeurs pour la memoire
+char *row1, *row2, *host_row;
 
 //Pour l'affichage
 GLuint gl_pixelBufferObject;
@@ -31,69 +35,21 @@ uchar4* d_textureBufferData = nullptr;
 
 
 //Epoque calcule sur le device. Un appel a cette fonction par pixel
-__global__ void epoque(char* in, char* out){
-    uint first_x = threadIdx.x;
-    uint x;
-    uint y = blockIdx.x;
+__global__ void epoque(char* in, char* out, char*){
+    uint x = threadIdx.x * (blockIdx.x*NB_THREAD) / 16;
 
-    //Pour éviter de refaire les multiplication
-    uint t_2ligne = NB_COLONNE * 2;
-    uint out_line = y * NB_COLONNE;
+    __shared__ char ligne[TEXTUR_COL];
 
-    char somme;
+    uint first=0;
+    uint last=TEXTUR_COL-1;
 
-    //La mémoire shared est beaucoup plus rapide que la globale (map1 et map2). Elle est partagé entre tous les thread d'un block.
-    //Elle est cependant bien plus petite.
-    __shared__ char ligne[NB_COLONNE * 3];
-
-    //Recopier la ligne du dessus, la ligne actuel, et celle du dessous pour les calculs.
-    x = first_x;
-    while(x < NB_COLONNE){
-        //Si la ligne du dessus existe
-        ligne[x] = ( y>0 ? in[x + (y-1)*NB_COLONNE] : (char)0);
-        //Copie de la case étudié
-        ligne[x + NB_COLONNE] = in[x + out_line];
-        //Si la ligne du dessous existe
-        ligne[x + t_2ligne] = (y<NB_LIGNE? in[x + (y+1)*NB_COLONNE] : (char)0);
-
-        //Lire plusieurs cases lorsque que l'image est plus grande que le nombre de thread max
-        x += NB_THREAD;
-    }
+    //Recopier la ligne pour les calculs.
+    ligne[x] = in[x];
 
     //Attendre que le block ait finis de recopier les lignes
     __syncthreads();
 
 
-    x = first_x;
-    while(x < NB_COLONNE){
-        somme = 0;
-        //La ligne au dessus et au dessous existe avec une valeur par défaut si hors de l'image.
-
-        //Test si la colonne gauche est dans l'image
-        if(x > 1) somme += ligne[x-1] + ligne[x-1 + NB_COLONNE] + ligne[x-1 + t_2ligne];
-        //Colonne de la case étudiée
-        somme += ligne[x] + ligne[x + t_2ligne];
-        //Test si la colonne droite est dans l'image
-        if(x < NB_COLONNE-1) somme += ligne[x+1] + ligne[x+1 + NB_COLONNE] + ligne[x+1 + t_2ligne];
-
-        //Si la case étudiée est vivante
-        if(ligne[x + NB_COLONNE] == 1){
-            if(somme == 3 || somme == 2)
-                out[x + out_line] = (char)1;
-            else
-                out[x + out_line] = (char)0;
-        }
-        //Si la case étudiée est morte
-        else{
-            if(somme == 3)
-                out[x + out_line] = (char)1;
-            else
-                out[x + out_line] = (char)0;
-        }
-
-        //Etudier plusieurs cases lorsque l'image est plus grande que le nombre de thread max
-        x += NB_THREAD;
-    }
 }
 
 //Calcule la texture à afficher
@@ -217,9 +173,9 @@ void renderScene(void){
     glBegin(GL_QUADS);
 
     glTexCoord2f(0.0f, 0.0f);    glVertex2f(0.0f, 0.0f);
-    glTexCoord2f(1.0f, 0.0f);    glVertex2f(float(NB_COLONNE), 0.0f);
-    glTexCoord2f(1.0f, 1.0f);    glVertex2f(float(NB_COLONNE), float(NB_LIGNE));
-    glTexCoord2f(0.0f, 1.0f);    glVertex2f(0.0f, float(NB_LIGNE));
+    glTexCoord2f(1.0f, 0.0f);    glVertex2f(float(TAILLE_LARGEUR), 0.0f);
+    glTexCoord2f(1.0f, 1.0f);    glVertex2f(float(TAILLE_LARGEUR), float(TAILLE_HAUTEUR));
+    glTexCoord2f(0.0f, 1.0f);    glVertex2f(0.0f, float(TAILLE_HAUTEUR));
 
     glEnd();
    
@@ -319,6 +275,7 @@ bool initialisation_opengl(int& argc, char** argv){
 
 //Le reste est compile avec le compilateur de base genre gcc
 int main(int argc, char** argv) {
+
     srand (time (NULL));
     //Informations sur la map
     N = NB_COLONNE * NB_LIGNE;
