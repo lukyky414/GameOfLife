@@ -5,27 +5,54 @@
 
 #include <unistd.h>
 #include <stdio.h>
-#include <time.h>
 
 #define SCREEN_COL 1920
 #define SCREEN_ROW 1080
 
-#define TEXTUR_COL 4096
-#define TEXTUR_ROW 2048
+#define TEXTUR_COL 1024
+#define TEXTUR_ROW 1024
 
 #define NB_THREAD 1024
-#define VOISINAGE 3
+//Voisinage 1 -> 3 cases prises en comptes
+#define VOISINAGE 1
 
 #define DEVICE 0 //see the temp.cu for the device number
 
 //Pour les boucles
 bool state;
 int my_window;
-int size;
-int cell_per_thread;
+bool has_new_regle;
+uint regle_number;
+
+//Constantes à calculer
+//Nombre de blocks
+uint NB_BLOCK;
+//Nombre d'octet de donnée
+uint NB_OCTET;
+//nombre d'octet de donnée par block
+uint NB_OCTET_BLOCK;
+//nombre de long
+uint NB_LONG;
+//nombre de long par block
+uint NB_LONG_BLOCK;
+//Nombre de regle possible avec le voisinage
+uint NB_REGLE;
+//Nombre de voisinage possible
+uint NB_VOISINAGE;
+
+__device__ uint d_NB_BLOCK;
+__device__ uint d_NB_OCTET;
+__device__ uint d_NB_OCTET_BLOCK;
+__device__ uint d_NB_LONG;
+__device__ uint d_NB_LONG_BLOCK;
+__device__ uint d_NB_REGLE;
+__device__ uint d_NB_VOISINAGE;
+
+
 
 //Pointeurs pour la memoire
-char *row1, *row2, *host_row;
+unsigned long *row1, *row2, *host_row;
+unsigned char *regle, *host_regle;
 
 //Pour l'affichage
 GLuint gl_pixelBufferObject;
@@ -34,119 +61,181 @@ cudaGraphicsResource* cudaPboResource;
 uchar4* d_textureBufferData = nullptr;
 
 
-//Epoque calcule sur le device. Un appel a cette fonction par pixel
-__global__ void epoque(char* in, char* out, char*){
-    uint x = threadIdx.x * (blockIdx.x*NB_THREAD) / 16;
+//Passe une epoque.
+__global__ void epoque(unsigned long* in, unsigned long* out, unsigned char* regle){
+    //Le long analysé
+    uint l = threadIdx.x / d_NB_LONG_BLOCK + blockIdx.x * d_NB_LONG_BLOCK;
+    //le numéro du bit étudié
+    uint n = threadIdx.x % d_NB_LONG_BLOCK;
+    //un uint avec son ne bit à 1
+    uint x = 1 << n;
 
-    __shared__ char ligne[TEXTUR_COL];
+    //Variables pour les boucles
+    int i; //Le ie bit est étudié
+    uint fin; //La fin de la boucle
+    uint _l, _n, _x; //Les variables du bit recherché (pour le voisinage)
 
-    uint first=0;
-    uint last=TEXTUR_COL-1;
+    //L'état d'une cellule est définie par son état et les états de son voisinage
+    uint etat;
 
-    //Recopier la ligne pour les calculs.
-    ligne[x] = in[x];
+    //Voisinage gauche
+    fin = n;
+    for(i = n-VOISINAGE; i < fin; i++){
+        if(i < 0){
+            if(l == 0)
+                _l = d_NB_LONG;
+            else
+                _l = l-1;
+            
+            _n = i+64;
+        }
+        else{
+            _l = l;
+            _n = i;
+        }
 
-    //Attendre que le block ait finis de recopier les lignes
-    __syncthreads();
+        _x = 1 << _n;
 
+        if(in[_l]&&_x)
+            etat++;
+        etat = etat << 1;
+    }
 
+    if(in[l]&&x)
+        etat++;
+    etat = etat << 1;
+
+    //Voisinage droit
+    fin = n+VOISINAGE+1;
+    for(i = n+1; i < fin; i++){
+        if(i > 63){
+            if(l==d_NB_LONG)
+                _l = 0;
+            else
+                _l = l+1;
+            
+            _n = i - 64;
+        }
+        else{
+            _l = l;
+            _n = i;
+        }
+
+        _x = 1 << _n;
+
+        if(in[_l]&&_x)
+            etat++;
+        etat = etat << 1;
+    }
+
+    etat = etat >> 1;
+
+    //Choix du out selon l'etat
+    if(regle[etat])
+        out[l] += (out[l] + x) && x;
+    else
+        out[l] -= out[l] && (x);
 }
 
 //Calcule la texture à afficher
-__global__ void affichageCuda(char* map, uchar4* texture){
-    uint first_x = threadIdx.x;
-    uint x;
-    uint y = blockIdx.x;
+__global__ void affichageCuda(unsigned long* row, uchar4* texture, uint y){
+    //Le long analysé
+    uint l = threadIdx.x / d_NB_LONG_BLOCK + blockIdx.x * d_NB_LONG_BLOCK;
+    //le numéro du bit étudié
+    uint n = threadIdx.x % d_NB_LONG_BLOCK;
+    //un uint avec son ne bit à 1
+    uint x = 1 << n;
 
-    //Pour éviter de refaire les multiplication
-    uint out_line = y * NB_COLONNE;
-    uint pos;
+    uint o_x = threadIdx.x + blockIdx.x * NB_THREAD;
 
-    x = first_x;
-    while(x < NB_COLONNE){
-        pos = x + out_line;
-        if(map[pos] == (char)1){
-            texture[pos].x = 255;
-            texture[pos].y = 255;
-            texture[pos].z = 255;
-        }
-        else{
-            texture[pos].x = 0;
-            texture[pos].y = 0;
-            texture[pos].z = 0;
-        }
+    uint pos = o_x + y*TEXTUR_COL;
 
-        x+=NB_THREAD;
+    if(row[l]&&x){
+        texture[pos].x = 255;
+        texture[pos].y = 255;
+        texture[pos].z = 255;
+    }
+    else{
+        texture[pos].x = 0;
+        texture[pos].y = 0;
+        texture[pos].z = 0;
     }
 }
 
 //Générer une carte de départ aléatoire
-void random_map(char* map, int n){
-    int i;
+void random_row(unsigned long* row, uint n){
+    uint i;
 
-    for(i=0; i<n; i++){
-        if(rand()%100 > 50)
-            map[i] = 1;
-        else
-            map[i] = 0;
+    for(i=0; i<n; i++)
+        row[i] = rand();
+}
+
+void init_row(unsigned long* row, uint n){
+    uint i;
+
+    for(i=0; i<n; i++)
+        row[i] = 0;
+    
+    row[0] += 1;
+}
+
+void reset_alea(){
+    state = false;
+    random_row(host_row,NB_LONG);
+    cudaMemcpy(row1, host_row, NB_OCTET, cudaMemcpyHostToDevice);
+    has_new_regle = true;
+}
+
+void print_row(){
+    uint i, j, n;
+    
+    for(i=0; i<NB_LONG; i++){
+        for(j=0; j <64; j++){
+            n = 1<<j;
+            printf("%c",((host_row[i]&&n)?'#':' '));
+        }
     }
+
+    printf("\n");
 }
 
 void reset(){
-    state = false;
-    random_map(host_map,N);
-    cudaMemcpy(map1, host_map, size, cudaMemcpyHostToDevice);
+    state=false;
+    init_row(host_row,NB_LONG);
+    cudaMemcpy(row1, host_row, NB_OCTET, cudaMemcpyHostToDevice);
+    cudaDeviceSynchronize();
+    has_new_regle = true;
+    print_row();
 }
 
-//Afficher la carte dans la console. Un # représente une case vivante, un < > une case morte.
-//Un saut de ligne sépare chaque ligne. Si le lecteur (console) affiche automatiquement un saut de ligne cet affichage est inutile quand l'image est trop grande.
-void affichageConsole(char* map){
-    int i, j;
-    for(j=0; j<NB_LIGNE; j++){
-        for(i=0; i<NB_COLONNE; i++)
-            printf((map[i + j*NB_COLONNE]?"#":" "));
-        printf("\n");
-    }
+void exit_function(){
+    printf("Exiting...\n");
+    cudaDeviceSynchronize();
+    cudaGraphicsUnregisterResource(cudaPboResource);
+
+    cudaFree(row1);
+    cudaFree(row2);
+    cudaFree(regle);
+
+    free(host_row);
+    free(host_regle);
+
+    exit(0);
 }
 
-clock_t t_1 = clock();
 //Mis à jours de la fenêtre.
 //Déclenche des époques et le dessin de l'image.
 void renderScene(void){
-    static clock_t t_1 = clock();
-    clock_t t, t_e, t_a;
-    int k = 0;
+    //if(!has_new_regle)
+    //    return;
+    reset();
+    printf("EPOQUES:\n");
+    has_new_regle = false;
+    
     size_t num_bytes;
-
-    //Temps pour les Epoques
-    //t_e = clock();
-
-    //Si FAST_SPEED est défini, on effectue un maximum d'époques entre deux frames, sinon une seul époque par frame
-#ifdef FAST_SPEED
-    do{
-#endif
-        state = !state;
-
-        if(state)
-            epoque<<<NB_LIGNE,NB_THREAD>>>(map1, map2);
-        else
-            epoque<<<NB_LIGNE,NB_THREAD>>>(map2, map1);
-        
-        k++;
-
-#ifdef FAST_SPEED
-        t = clock()-t_1;
-    }while(t < max_time);
-#endif
-    //printf("  Epoques en %.5fs (%d)\n", (double)(clock()-t_e)/CLOCKS_PER_SEC, k);
-    //Reset du timer ici. On prend en compte l'affichage pour le calcul du temps.
-    t_1 = clock();
-
-    //Temps pour l'Affichage
-    //t_a = clock();
+    uint i;
 
     //Affichage
-
     glClear(GL_COLOR_BUFFER_BIT);
     glEnable(GL_TEXTURE_2D);
     //Bind la texture
@@ -158,24 +247,46 @@ void renderScene(void){
     //On réserve le PBO
     cudaGraphicsMapResources(1, &cudaPboResource, 0);
     cudaGraphicsResourceGetMappedPointer((void**)&d_textureBufferData, &num_bytes, cudaPboResource);
+    
+    affichageCuda<<<NB_BLOCK,NB_THREAD>>>(row1, d_textureBufferData, 0);
+    cudaMemcpy(host_row, row1, NB_OCTET, cudaMemcpyDeviceToHost);print_row();
 
-    if(state)
-        affichageCuda<<<NB_LIGNE,NB_THREAD>>>(map2, d_textureBufferData);
-    else
-        affichageCuda<<<NB_LIGNE,NB_THREAD>>>(map1, d_textureBufferData);
+    for(i=1; i < TEXTUR_ROW; i++){
+        cudaDeviceSynchronize();
+        state = !state;
+
+        if(state){
+            epoque<<<NB_BLOCK,NB_THREAD>>>(row1, row2, regle);
+            affichageCuda<<<NB_BLOCK,NB_THREAD>>>(row2, d_textureBufferData, i);
+            cudaMemcpy(host_row, row2, NB_OCTET, cudaMemcpyDeviceToHost);print_row();
+        }
+        else{
+            epoque<<<NB_BLOCK,NB_THREAD>>>(row2, row1, regle);
+            affichageCuda<<<NB_BLOCK,NB_THREAD>>>(row1, d_textureBufferData, i);
+            cudaMemcpy(host_row, row1, NB_OCTET, cudaMemcpyDeviceToHost);print_row();
+        }
+    }
 
     //Copier les pixels du PBO
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, NB_COLONNE, NB_LIGNE, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEXTUR_COL, TEXTUR_ROW, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 
     cudaGraphicsUnmapResources(1, &cudaPboResource, 0);
    
     //On dessine la texture à l'écran
     glBegin(GL_QUADS);
 
-    glTexCoord2f(0.0f, 0.0f);    glVertex2f(0.0f, 0.0f);
-    glTexCoord2f(1.0f, 0.0f);    glVertex2f(float(TAILLE_LARGEUR), 0.0f);
-    glTexCoord2f(1.0f, 1.0f);    glVertex2f(float(TAILLE_LARGEUR), float(TAILLE_HAUTEUR));
-    glTexCoord2f(0.0f, 1.0f);    glVertex2f(0.0f, float(TAILLE_HAUTEUR));
+    //Coordonnée texture proportion  -   coordonnées écran pixel
+
+    glTexCoord2f(0.0f, 0.0f);          glVertex2f(0.0f, 0.0f);
+    glTexCoord2f(1.0f, 0.0f);          glVertex2f(float(SCREEN_COL), 0.0f);
+    glTexCoord2f(1.0f, 1.0f);          glVertex2f(float(SCREEN_COL), float(SCREEN_ROW));
+    glTexCoord2f(0.0f, 1.0f);          glVertex2f(0.0f, float(SCREEN_ROW));//*/
+
+    /*
+    glTexCoord2f(0.25f, 0.0f);          glVertex2f(0.0f, 0.0f);
+    glTexCoord2f(0.75f, 0.0f);          glVertex2f(float(SCREEN_COL), 0.0f);
+    glTexCoord2f(0.75f, 0.5f);          glVertex2f(float(SCREEN_COL), float(SCREEN_ROW));
+    glTexCoord2f(0.25f, 0.5f);          glVertex2f(0.0f, float(SCREEN_ROW));//*/
 
     glEnd();
    
@@ -183,20 +294,7 @@ void renderScene(void){
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glutSwapBuffers();
-    //printf("Affichage en %.5fs\n", (double)(clock()-t_a)/CLOCKS_PER_SEC);
-}
-
-void exit_function(){
-    printf("Exiting...\n");
-    cudaDeviceSynchronize();
-    cudaGraphicsUnregisterResource(cudaPboResource);
-
-    cudaFree(map1);
-    cudaFree(map2);
-
-    free(host_map);
-
-    exit(0);
+    exit_function();
 }
 
 //Gère les commandes clavier
@@ -206,8 +304,14 @@ void keyboardHandler(unsigned char key, int x, int y){
         exit_function();
     }
     if(key=='r'){
+        reset_alea();
+    }
+    if(key=='i'){
         reset();
     }
+    //TODO right = regle_number++, new_regle
+    //lest = regle_number--, new_regle
+    //TODO deplacement de la camera avec haut et bas
 }
 
 bool initialisation_opengl(int& argc, char** argv){
@@ -215,13 +319,13 @@ bool initialisation_opengl(int& argc, char** argv){
     glutInit(&argc, argv);
     //Init windows
     glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);
-    glutInitWindowSize(1920,1080);
-    my_window = glutCreateWindow("Game Of Life");
+    glutInitWindowSize(SCREEN_COL,SCREEN_ROW);
+    my_window = glutCreateWindow("Automate Cellulaire");
     glutFullScreen();
 
     //event callbacks
     glutDisplayFunc(renderScene);
-    glutIdleFunc(renderScene);
+    //glutIdleFunc(renderScene);
     glutKeyboardFunc(keyboardHandler);
 
 
@@ -245,7 +349,7 @@ bool initialisation_opengl(int& argc, char** argv){
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     //Défini la texture. Une GL_TEXTURE_2D, level de base, RGB avec Alpha sur 8bit, taille, pas de bord, pixel format rgba, pixel type, pointeur data
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, NB_COLONNE, NB_LIGNE, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, TEXTUR_COL, TEXTUR_ROW, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 
 
     //Génère les buffers. Il y en as 1.
@@ -255,7 +359,7 @@ bool initialisation_opengl(int& argc, char** argv){
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
 
     //Créer et initialise le buffer. On copye h_textureBufferData dans le buffer d'openGL
-    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, NB_COLONNE * NB_LIGNE * sizeof(uchar4), 0, GL_STREAM_COPY);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, TEXTUR_COL * TEXTUR_ROW * sizeof(uchar4), 0, GL_STREAM_COPY);
 
     //Créer le Pixel Buffer Object. Cuda va écrire dedans, OpenGL va l'afficher. Rien ne passe par le CPU.
     cudaError result = cudaGraphicsGLRegisterBuffer(&cudaPboResource, gl_pixelBufferObject, cudaGraphicsMapFlagsWriteDiscard);
@@ -267,38 +371,86 @@ bool initialisation_opengl(int& argc, char** argv){
 
     //Change les coordonnees pour l'affichage
     glMatrixMode(GL_PROJECTION);
-    glOrtho(0, NB_COLONNE, 0, NB_LIGNE, -1, 1);
+    glOrtho(0, SCREEN_COL, 0, SCREEN_ROW, -1, 1);
     glMatrixMode(GL_MODELVIEW);
 
     return true;
 }
 
+void print_regle(){
+    printf("%d\n", regle_number);
+    uint i;
+
+    for(i=0; i<NB_VOISINAGE; i++){
+        printf("%c", (host_regle[i]?'#':' '));
+    }
+    printf("\nEPOQUES:\n");
+}
+
+void new_regle(){
+    int i;
+    uint n = regle_number;
+    for(i=NB_VOISINAGE-1; i >= 0; i--){
+        host_regle[i] = n && 1;
+        n = n >> 1;
+    }
+    reset();
+    cudaMemcpy(regle, host_regle, NB_VOISINAGE, cudaMemcpyHostToDevice);
+    cudaDeviceSynchronize();
+    has_new_regle = true;
+    print_regle();
+}
+
+
+__global__ void copy_const(uint nb_octet, uint nb_block, uint nb_long, uint nb_octet_block, uint nb_long_block, uint nb_voisinage, uint nb_regle){
+    d_NB_OCTET = nb_octet;
+
+    d_NB_BLOCK = nb_block;
+    d_NB_LONG = nb_long;
+
+    d_NB_OCTET_BLOCK = nb_octet_block;
+    d_NB_LONG_BLOCK = nb_long_block;
+
+    d_NB_VOISINAGE = nb_voisinage;
+    d_NB_REGLE = nb_regle;
+}
+
 //Le reste est compile avec le compilateur de base genre gcc
 int main(int argc, char** argv) {
+    NB_OCTET = TEXTUR_COL / 8;
 
-    srand (time (NULL));
-    //Informations sur la map
-    N = NB_COLONNE * NB_LIGNE;
-    size = N * sizeof(char);
+    NB_BLOCK = TEXTUR_COL / NB_THREAD;
+    NB_LONG = NB_OCTET / 8;
+
+    NB_OCTET_BLOCK = NB_THREAD / 8;
+    NB_LONG_BLOCK = NB_OCTET_BLOCK / 8;
+
+    NB_VOISINAGE = pow(2,VOISINAGE*2 + 1);
+    NB_REGLE = pow(2,NB_VOISINAGE);
+
+    copy_const<<<1,1>>>(NB_OCTET, NB_BLOCK, NB_LONG, NB_OCTET_BLOCK, NB_LONG_BLOCK, NB_VOISINAGE, NB_REGLE);
+
 
     //Variables de boucles
-    max_time = CLOCKS_PER_SEC / FPS;
     state = false;
+    has_new_regle = true;
 
     //Alloue la mémoire device
     printf("Allocation Device\n");
-    cudaMalloc((void**) &map1, size);
-    cudaMalloc((void**) &map2, size);
+    cudaMalloc((void**) &row1, NB_OCTET);
+    cudaMalloc((void**) &row2, NB_OCTET);
+    cudaMalloc((void**) &regle, NB_VOISINAGE);
     
-
     //Alloue la mémoire host
     printf("Allocation Host\n");
-    host_map = (char*) malloc (size);
+    host_row = (unsigned long*) malloc (NB_OCTET);
+    host_regle = (unsigned char*) malloc (NB_VOISINAGE);
     
+    regle_number = 126;
+    new_regle();
+
     //Attendre que la copie se termine
     cudaDeviceSynchronize();
-
-    //Désallocation du host memory
 
     //printf("Initialisation de la fenêtre\n");
     if(!initialisation_opengl(argc, argv))
@@ -306,7 +458,6 @@ int main(int argc, char** argv) {
 
     //windows process
     printf("Execution\n");
-    reset();
     glutMainLoop();
     
     //Pas de désallocation ici, le programme quitte dans le keyboard Handler.
