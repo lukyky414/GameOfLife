@@ -48,7 +48,7 @@ void initialisation_opengl(){
 
     //Callback
     glutDisplayFunc(renderScene); //Lors de l'affichage
-    glutIdleFunc(renderScene); //Idle -> quand rien ne se passe
+    //glutIdleFunc(renderScene); //Idle -> quand rien ne se passe
     glutKeyboardFunc(keyboardHandler); // évenements claviers
 
 

@@ -34,12 +34,15 @@ __global__ void texture_cuda(unsigned char* data, uchar4* texture, uint y){
 }
 
 extern unsigned char* host_data;
+extern unsigned char* data1;
 //Générer un ruban aléatoire
 void random_data(){
     uint i;
 
     for(i=0; i<TEXTUR_COL; i++)
         host_data[i] = rand()%2;
+
+    cudaMemcpy(data1, host_data, TEXTUR_COL, cudaMemcpyHostToDevice); cudaDeviceSynchronize();
 }
 
 //Générer un ruban avec une seule cellule active
@@ -50,6 +53,8 @@ void initial_data(){
         host_data[i] = 0;
     
     host_data[TEXTUR_COL/2] = 1;
+
+    cudaMemcpy(data1, host_data, TEXTUR_COL, cudaMemcpyHostToDevice); cudaDeviceSynchronize();
 }
 
 

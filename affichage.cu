@@ -10,14 +10,36 @@ extern uchar4* d_textureBufferData;
 extern unsigned char *data1, *data2, *host_data;
 extern unsigned char *rule, *host_rule;
 
-extern uint need_refresh;
+//Permet de calculer la proportion de l'image à afficher, car les coordonnées ne sont pas en pixel.
+float l, r, u, d;
+struct static_block{
+    static_block(){
+        //Affiche le centre horizontal de l'image
+        l = (float(TEXTUR_COL)/2.0f - float(SCREEN_COL)/2.0f)/float(TEXTUR_COL);
+        r = (float(TEXTUR_COL)/2.0f + float(SCREEN_COL)/2.0f)/float(TEXTUR_COL);
+        //Affiche le haut de l'immage
+        u = 0.0f;
+        d = (float(SCREEN_ROW))/float(TEXTUR_ROW);
+        //Affiche le bas de l'image
+        //u = (float(TEXTUR_ROW) - float(SCREEN_ROW))/float(TEXTUR_ROW);
+        //d = 1.0f;
+    
+        if(l < 0.0f) l = 0.0f;
+        if(r > 1.0f) r = 1.0f;
+        if(u < 0.0f) u = 0.0f;
+        if(d > 1.0f) d = 1.0f;
+
+        //Inverser le haut et le bas. Je ne sais pas pourquoi la texture est inversée
+        float tmp;
+        tmp = u;
+        u = d;
+        d = tmp;
+    }
+};
+static static_block my_static_block;
 
 //Fonction de boucle principale
 void renderScene(void){
-    //Empêche d'afficher s'il n'y a pas besoin
-    if(need_refresh == 0)
-        return;
-
     uint i;
     bool state = 1;
     static size_t texture_size = TEXTUR_COL * TEXTUR_ROW * sizeof(uchar4);
@@ -33,7 +55,7 @@ void renderScene(void){
     //Calcul de la 1e ligne de la texture
     texture_cuda<<<NB_BLOCK,NB_THREAD>>>(data1, d_textureBufferData, 0);
     cudaMemcpy(host_data, data1, TEXTUR_COL, cudaMemcpyDeviceToHost); cudaDeviceSynchronize();
-    if(need_refresh == 1)print_data();
+    print_data();
 
     //Boucle sur le reste des lignes de la texture
     for(i=1; i < TEXTUR_ROW; i++){
@@ -49,7 +71,7 @@ void renderScene(void){
             texture_cuda<<<NB_BLOCK,NB_THREAD>>>(data1, d_textureBufferData, i); cudaDeviceSynchronize();
             cudaMemcpy(host_data, data1, TEXTUR_COL, cudaMemcpyDeviceToHost); cudaDeviceSynchronize();
         }
-        if(need_refresh == 1)print_data();
+        print_data();
         state = 1-state;
     }
 
@@ -61,11 +83,11 @@ void renderScene(void){
     glBegin(GL_QUADS); //On dessine une texture dans un quadrilatère (rectangle de l'écran)
     
 
-    //coordonnée texture (pixel)                      -                      coordonnées écran (pixel)
-    glTexCoord2f( 0.0f, 1.0f);                                              glVertex2f(0.0f, -20.0f);
-    glTexCoord2f( 1.0f, 1.0f);                                              glVertex2f(float(SCREEN_COL), -20.0f);
-    glTexCoord2f( 1.0f, 0.0f);                                              glVertex2f(float(SCREEN_COL), float(SCREEN_ROW));
-    glTexCoord2f( 0.0f, 0.0f);                                              glVertex2f(0.0f, float(SCREEN_ROW));
+    //coordonnée texture (pixel)   -   coordonnées écran (pixel)
+    glTexCoord2f( l, u);              glVertex2f(0.0f, 0.0f);
+    glTexCoord2f( r, u);              glVertex2f(float(SCREEN_COL), 0.0f);
+    glTexCoord2f( r, d);              glVertex2f(float(SCREEN_COL), float(SCREEN_ROW));
+    glTexCoord2f( l, d);              glVertex2f(0.0f, float(SCREEN_ROW));
 
     glEnd(); //Fin du quadrilatère
    
@@ -74,11 +96,7 @@ void renderScene(void){
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glutSwapBuffers();
-    if(need_refresh == 2){
-        initial_data();
-        cudaMemcpy(data1, host_data, TEXTUR_COL, cudaMemcpyHostToDevice); cudaDeviceSynchronize();
-    }
-    need_refresh--;
+    initial_data();
 }
 
 //Affichage d'une ligne dans le terminal

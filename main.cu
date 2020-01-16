@@ -11,13 +11,9 @@ GLuint gl_texturePtr;
 cudaGraphicsResource* cudaPboResource;
 uchar4* d_textureBufferData;
 
-uint need_refresh;
-
 
 //Le reste est compile avec le compilateur de base genre gcc
 int main(int argc, char** argv) {
-    need_refresh = 2;
-
     initialisation();
 
     glutMainLoop();
@@ -51,13 +47,26 @@ void keyboardHandler(unsigned char key, int x, int y){
     if(key=='r'){
         random_data();
         cudaMemcpy(data1, host_data, TEXTUR_COL, cudaMemcpyHostToDevice); cudaDeviceSynchronize();
-        need_refresh = 1;
+        renderScene();
     }
     //Initial seed reset
     if(key=='i'){
         initial_data();
         cudaMemcpy(data1, host_data, TEXTUR_COL, cudaMemcpyHostToDevice); cudaDeviceSynchronize();
-        need_refresh = 1;
+        renderScene();
+    }
+
+    if(key=='n'){
+        rule_id++;
+        initial_data();
+        new_rule();
+        renderScene();
+    }
+    if(key=='b'){
+        rule_id--;
+        initial_data();
+        new_rule();
+        renderScene();
     }
     //TODO right = regle_number++, new_regle
     //lest = regle_number--, new_regle

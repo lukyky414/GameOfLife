@@ -12,8 +12,8 @@
 #define SCREEN_ROW 1080
 
 //Fenetre de calcul 6144 3000
-#define TEXTUR_COL 2048
-#define TEXTUR_ROW 1080
+#define TEXTUR_COL 6144
+#define TEXTUR_ROW 3000
 
 //Voisinage de distance 1 (3 cases prises en comptes)
 #define VOISINAGE 1
