@@ -12,11 +12,11 @@
 #define SCREEN_ROW 1080
 
 //Fenetre de calcul 6144 3000
-#define TEXTUR_COL 6144
-#define TEXTUR_ROW 3000
+#define TEXTUR_COL 480
+#define TEXTUR_ROW 270
 
 //Voisinage de distance 1 (3 cases prises en comptes)
-#define VOISINAGE 1
+#define VOISINAGE 2
 
 //Voir le retour de device_info.cu
 #define NB_THREAD 1024

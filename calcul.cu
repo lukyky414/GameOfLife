@@ -1,24 +1,28 @@
 #include "calcul.cuh"
 
 //Calcul d'une génération
-__global__ void data_cuda(unsigned char* in, unsigned char* out, unsigned char* rule){
+__global__ void data_cuda(unsigned char* in, unsigned char* out, unsigned long rule){
     uint x = threadIdx.x + blockIdx.x * NB_THREAD;
+    if(x >= TEXTUR_COL)
+        return;
 
     int i;
     //L'état d'une cellule est défini par son voisinage
-    uint state = 0;
+    unsigned long state = 0;
 
     for(i=-VOISINAGE; i <= VOISINAGE; i++){
         state = state << 1;
-        state += in[(x+i)%TEXTUR_COL];
+        state += in[(x+TEXTUR_COL+i)%TEXTUR_COL];
     }
 
-    out[x] = rule[state];
+    out[x] = (rule&(1l<<state))>>state;
 }
 
 //Calcul de la texture
 __global__ void texture_cuda(unsigned char* data, uchar4* texture, uint y){
     uint x = threadIdx.x + blockIdx.x*NB_THREAD;
+    if(x >= TEXTUR_COL)
+        return;
     uint pos = x + y*TEXTUR_COL;
 
     if(data[x]){
@@ -55,22 +59,4 @@ void initial_data(){
     host_data[TEXTUR_COL/2] = 1;
 
     cudaMemcpy(data1, host_data, TEXTUR_COL, cudaMemcpyHostToDevice); cudaDeviceSynchronize();
-}
-
-
-extern uint rule_id;
-extern unsigned char *rule, *host_rule;
-//Passer d'un ID à une règle
-void new_rule(){
-    uint i;
-    uint nb_state = pow(2, VOISINAGE*2+1);
-    uint s = 1<<nb_state;
-
-    for(i=0; i < nb_state; i++){
-        //Etat de sortie 0 ou 1 en fonction du bit de l'id
-        s = s >> 1;
-        host_rule[i] = ((rule_id & s) > 0?1:0);
-    }
-    
-    cudaMemcpy(rule, host_rule, nb_state, cudaMemcpyHostToDevice); cudaDeviceSynchronize();
 }
