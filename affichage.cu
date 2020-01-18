@@ -10,21 +10,23 @@ extern uchar4* d_textureBufferData;
 extern unsigned char *data1, *data2, *host_data;
 extern unsigned long rule_id;
 extern char* rule;
+extern unsigned char voisinage, portee;
+extern unsigned long texture_width, texture_height;
 
 //Permet de calculer la proportion de l'image à afficher, car les coordonnées ne sont pas en pixel.
 float l, r, u, d;
-uint NB_BLOCK;
+uint nb_block;
 struct static_block{
     static_block(){
         //Affiche le centre horizontal de l'image
-        l = (float(TEXTUR_COL)/2.0f - float(SCREEN_COL)/2.0f)/float(TEXTUR_COL);
-        r = (float(TEXTUR_COL)/2.0f + float(SCREEN_COL)/2.0f)/float(TEXTUR_COL);
+        l = (float(texture_width)/2.0f - float(SCREEN_WIDTH)/2.0f)/float(texture_width);
+        r = (float(texture_width)/2.0f + float(SCREEN_WIDTH)/2.0f)/float(texture_width);
         //Affiche le haut de l'immage
-        //u = 0.0f;
-        //d = (float(SCREEN_ROW))/float(TEXTUR_ROW);
+        u = 0.0f;
+        d = (float(SCREEN_HEIGHT))/float(texture_height);
         //Affiche le bas de l'image
-        u = (float(TEXTUR_ROW) - float(SCREEN_ROW))/float(TEXTUR_ROW);
-        d = 1.0f;
+        //u = (float(texture_height) - float(SCREEN_HEIGHT))/float(texture_height);
+        //d = 1.0f;
     
         if(l < 0.0f) l = 0.0f;
         if(r > 1.0f) r = 1.0f;
@@ -37,18 +39,18 @@ struct static_block{
         u = d;
         d = tmp;
 
-        NB_BLOCK = TEXTUR_COL / NB_THREAD;
-        if(TEXTUR_COL%NB_THREAD > 0)
-            NB_BLOCK++;
+        nb_block = texture_width / NB_THREAD;
+        if(texture_width%NB_THREAD > 0)
+            nb_block++;
     }
 };
-static static_block my_static_block;
 
 //Fonction de boucle principale
 void renderScene(void){
     uint i, len;
     bool state = 1;
-    static size_t texture_size = TEXTUR_COL * TEXTUR_ROW * sizeof(uchar4);
+    static static_block my_static_block;
+    static size_t texture_size = texture_width * texture_height * sizeof(uchar4);
     
     glClear(GL_COLOR_BUFFER_BIT); //Effacer l'écran
     glEnable(GL_TEXTURE_2D); //Active server-side
@@ -58,29 +60,29 @@ void renderScene(void){
     cudaGraphicsResourceGetMappedPointer((void**)&d_textureBufferData, &texture_size, cudaPboResource); //Récupération du pointeur
     
     //Calcul de la 1e ligne de la texture
-    texture_cuda<<<NB_BLOCK,NB_THREAD>>>(data1, d_textureBufferData, 0);
+    texture_cuda<<<nb_block,NB_THREAD>>>(data1, d_textureBufferData, 0, texture_width);
     //cudaMemcpy(host_data, data1, TEXTUR_COL, cudaMemcpyDeviceToHost); cudaDeviceSynchronize();
     //print_data();
 
     //Boucle sur le reste des lignes de la texture
-    for(i=1; i < TEXTUR_ROW; i++){
+    for(i=1; i < texture_height; i++){
         if(state){
             //Effectuer une époque
-            data_cuda<<<NB_BLOCK,NB_THREAD>>>(data1, data2, rule_id); cudaDeviceSynchronize();
+            data_cuda<<<nb_block,NB_THREAD>>>(data1, data2, rule_id, portee, texture_width); cudaDeviceSynchronize();
             //Calcul de la ligne de la texture
-            texture_cuda<<<NB_BLOCK,NB_THREAD>>>(data2, d_textureBufferData, i); cudaDeviceSynchronize();
+            texture_cuda<<<nb_block,NB_THREAD>>>(data2, d_textureBufferData, i, texture_width); cudaDeviceSynchronize();
             //cudaMemcpy(host_data, data2, TEXTUR_COL, cudaMemcpyDeviceToHost);cudaDeviceSynchronize();
         }
         else{
-            data_cuda<<<NB_BLOCK,NB_THREAD>>>(data2, data1, rule_id); cudaDeviceSynchronize();
-            texture_cuda<<<NB_BLOCK,NB_THREAD>>>(data1, d_textureBufferData, i); cudaDeviceSynchronize();
+            data_cuda<<<nb_block,NB_THREAD>>>(data2, data1, rule_id, portee, texture_width); cudaDeviceSynchronize();
+            texture_cuda<<<nb_block,NB_THREAD>>>(data1, d_textureBufferData, i, texture_width); cudaDeviceSynchronize();
             //cudaMemcpy(host_data, data1, TEXTUR_COL, cudaMemcpyDeviceToHost); cudaDeviceSynchronize();
         }
         //print_data();
         state = 1-state;
     }
 
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEXTUR_COL, TEXTUR_ROW, GL_RGBA, GL_UNSIGNED_BYTE, 0); //Copier les pixels du PBO vers la texture gl
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, texture_width, texture_height, GL_RGBA, GL_UNSIGNED_BYTE, 0); //Copier les pixels du PBO vers la texture gl
     cudaGraphicsUnmapResources(1, &cudaPboResource, 0); //Désallouer la texture cuda
     
     //Afficher la texture à l'écran
@@ -99,9 +101,9 @@ void renderScene(void){
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-
-    glColor3f(1.0f, 0.0f, 0.0f);
-    glRasterPos2f(-0.99f, 0.97f);
+    //Dessiner le numéro de la règle
+    glColor3f(1.0f, 0.0f, 0.0f);//En rouge
+    glRasterPos2f(-0.99f, 0.97f);//En haut à gauche de l'écran
     len = strlen(rule);
     for(i=0; i<len; i++)
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, rule[i]);
@@ -115,7 +117,7 @@ void renderScene(void){
 void print_data(){
     uint i;
     
-    for(i=0; i<TEXTUR_COL; i++)
+    for(i=0; i<texture_width; i++)
         printf("%c",(host_data[i]?'#':' '));
 
     printf("\n");
@@ -126,12 +128,11 @@ void print_data(){
 void print_rule(){
     printf("Rule number: %d\n", rule_id);
     uint i, j;
-    uint view = VOISINAGE*2+1;
-    uint nb_state = pow(2, view);
+    uint nb_state = pow(2, voisinage);
 
     for(i=0; i<nb_state; i++){
         printf(":");
-        for(j=view; j>0; j--)
+        for(j=voisinage; j>0; j--)
             printf("%c", ( (i& (1<<(j-1)) )?'#':' ' ));
     }
     printf(":\n");
@@ -139,8 +140,8 @@ void print_rule(){
 
     for(i=0; i<nb_state; i++){
         printf(":");
-        for(j=0; j<view; j++){
-            if(j==VOISINAGE && ( rule_id& (1<<i) ) )
+        for(j=0; j<voisinage; j++){
+            if(j==portee && ( rule_id& (1<<i) ) )
                 printf("#");
             else
                 printf(" ");

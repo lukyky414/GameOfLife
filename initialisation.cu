@@ -3,9 +3,17 @@
 extern unsigned char *data1, *data2, *host_data;
 extern unsigned long rule_id;
 extern char* rule;
+extern unsigned char voisinage, portee;
+extern unsigned long texture_width, texture_height;
 
-void initialisation(){
-    uint size_data = TEXTUR_COL;//*sizeof(char);
+void initialisation(int argc, char** argv){
+    texture_width = 6144;
+    texture_height = 3000;
+    
+    portee = 1;
+    voisinage = portee*2+1;
+    uint size_data = texture_width;//*sizeof(char);
+    
 
     //Alloue la mémoire device
     cudaMalloc((void**) &data1, size_data);
@@ -21,27 +29,21 @@ void initialisation(){
 
     initial_data();
 
-    initialisation_opengl();
+    initialisation_opengl(argc, argv);
 }
 
 extern GLuint gl_pixelBufferObject;
 extern GLuint gl_texturePtr;
 extern cudaGraphicsResource* cudaPboResource;
 
-void initialisation_opengl(){
-    int argc=1;
-    char** argv = (char**) malloc(sizeof(char*));
-    argv[0] = (char*)malloc(4*sizeof(char));
-    argv[0][0] = 'm'; argv[0][1] = 'a'; argv[0][2] = 'i'; argv[0][3] = 'n';
-
-
+void initialisation_opengl(int argc, char** argv){
     //initialisation de glut
     glutInit(&argc, argv);
 
     
     //initialisation de la fenêtre
     glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE); //Mode RGB
-    glutInitWindowSize(SCREEN_COL,SCREEN_ROW); //Taille de la fenêtre
+    glutInitWindowSize(SCREEN_WIDTH,SCREEN_HEIGHT); //Taille de la fenêtre
     glutCreateWindow("Automate Cellulaire"); //Création de la fenêtre
     glutFullScreen(); //Plein écran
 
@@ -67,7 +69,7 @@ void initialisation_opengl(){
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     //Défini la texture. Une GL_TEXTURE_2D, level de base, RGB avec Alpha sur 8bit, taille, pas de bord, pixel format rgba, pixel type, pointeur data
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, TEXTUR_COL, TEXTUR_ROW, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texture_width, texture_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 
     //Génère les buffers. Il y en as 1.
     glGenBuffers(1, &gl_pixelBufferObject);
@@ -76,7 +78,7 @@ void initialisation_opengl(){
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
 
     //Créer et initialise le buffer à 0
-    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, TEXTUR_COL * TEXTUR_ROW * sizeof(uchar4), 0, GL_STREAM_COPY);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, texture_width * texture_height * sizeof(uchar4), 0, GL_STREAM_COPY);
 
     //Créer le Pixel Buffer Object. Cuda va écrire dedans, OpenGL va l'afficher. Rien ne passe par le CPU.
     cudaGraphicsGLRegisterBuffer(&cudaPboResource, gl_pixelBufferObject, cudaGraphicsMapFlagsWriteDiscard);
@@ -89,6 +91,6 @@ void initialisation_opengl(){
     //glMatrixMode(GL_TEXTURE);
     //glOrtho(-(TEXTUR_COL/2), TEXTUR_COL/2, -(TEXTUR_ROW/2), TEXTUR_ROW, -1, 1);
     //glMatrixMode(GL_PROJECTION);
-    //glOrtho(0, SCREEN_COL, 0, SCREEN_ROW, -1, 1);
+    //glOrtho(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, -1, 1);
     //glMatrixMode(GL_MODELVIEW);
 }

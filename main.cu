@@ -4,6 +4,9 @@
 unsigned char *data1, *data2, *host_data;
 unsigned long rule_id;
 char* rule;
+unsigned char voisinage, portee;
+unsigned long texture_width, texture_height;
+unsigned long screen_width, screen_height;
 
 //Pour l'affichage
 GLuint gl_pixelBufferObject;
@@ -14,7 +17,7 @@ uchar4* d_textureBufferData;
 
 //Le reste est compile avec le compilateur de base genre gcc
 int main(int argc, char** argv) {
-    initialisation();
+    initialisation(argc, argv);
 
 
     glutMainLoop();
@@ -23,7 +26,7 @@ int main(int argc, char** argv) {
 
 //Permet de désallouer toutes les variables avant de quitter
 void exit_function(){
-    printf("EExiting...\n");
+    printf("Exiting...\n");
     cudaDeviceSynchronize();
     cudaGraphicsUnregisterResource(cudaPboResource);
 
@@ -57,12 +60,12 @@ void keyboardHandler(unsigned char key, int x, int y){
     if(key=='d' || key=='q'){
         if(key=='d'){
             rule_id++;
-            if(rule_id == pow(2,pow(2,VOISINAGE*2+1)))
+            if(rule_id == pow(2,pow(2,voisinage)))
                 rule_id = 0;
         }
         else{
             if(rule_id == 0)
-                rule_id=pow(2,pow(2,VOISINAGE*2+1));
+                rule_id=pow(2,pow(2,voisinage));
             rule_id--;
         }
 
@@ -76,7 +79,5 @@ void keyboardHandler(unsigned char key, int x, int y){
         renderScene();
 
     }
-    //TODO right = regle_number++, new_regle
-    //lest = regle_number--, new_regle
     //TODO deplacement de la camera avec haut et bas
 }

@@ -1,5 +1,5 @@
 #pragma once
 #include "main.cuh"
 
-void initialisation();
-void initialisation_opengl();
+void initialisation(int argc, char** argv);
+void initialisation_opengl(int argc, char** argv);
