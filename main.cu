@@ -7,6 +7,7 @@ char* rule;
 unsigned char voisinage, portee;
 unsigned long texture_width, texture_height;
 unsigned long screen_width, screen_height;
+bool is_random;
 
 //Pour l'affichage
 GLuint gl_pixelBufferObject;
@@ -33,13 +34,15 @@ void exit_function(){
     cudaFree(data1);
     cudaFree(data2);
 
+    free(rule);
+    free(host_data);
+
     exit(0);
 }
 
 
 //Gère les commandes clavier
 void keyboardHandler(unsigned char key, int x, int y){
-    static bool initial_state = true;
     //printf("%c\n", key);
     //Permet de quitter le programme
     if(key==27){
@@ -47,13 +50,13 @@ void keyboardHandler(unsigned char key, int x, int y){
     }
     //Random reset
     if(key=='r'){
-        initial_state = false;
+        is_random = true;
         random_data();
         renderScene();
     }
     //Initial seed reset
     if(key=='i'){
-        initial_state = true;
+        is_random = false;
         initial_data();
         renderScene();
     }
@@ -69,10 +72,10 @@ void keyboardHandler(unsigned char key, int x, int y){
             rule_id--;
         }
 
-        if(initial_state)
-            initial_data();
-        else
+        if(is_random)
             random_data();
+        else
+            initial_data();
         
         sprintf(rule, "%d", rule_id);
 

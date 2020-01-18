@@ -1,14 +1,26 @@
 #include "initialisation.cuh"
+#include <boost/filesystem.hpp>
 
 extern unsigned char *data1, *data2, *host_data;
 extern unsigned long rule_id;
 extern char* rule;
 extern unsigned char voisinage, portee;
 extern unsigned long texture_width, texture_height;
+extern bool is_random;
 
 void initialisation(int argc, char** argv){
-    texture_width = 6144;
-    texture_height = 3000;
+    {boost::filesystem::path dir("./output/"); boost::filesystem::create_directory(dir);}
+    {boost::filesystem::path dir("./output/random"); boost::filesystem::create_directory(dir);}
+    {boost::filesystem::path dir("./output/random/3voisinage"); boost::filesystem::create_directory(dir);}
+    {boost::filesystem::path dir("./output/random/5voisinage"); boost::filesystem::create_directory(dir);}
+    {boost::filesystem::path dir("./output/random/7voisinage"); boost::filesystem::create_directory(dir);}
+    {boost::filesystem::path dir("./output/one_seed"); boost::filesystem::create_directory(dir);}
+    {boost::filesystem::path dir("./output/one_seed/3voisinage"); boost::filesystem::create_directory(dir);}
+    {boost::filesystem::path dir("./output/one_seed/5voisinage"); boost::filesystem::create_directory(dir);}
+    {boost::filesystem::path dir("./output/one_seed/7voisinage"); boost::filesystem::create_directory(dir);}
+
+    texture_width = 3840;
+    texture_height = 2160;
     
     portee = 1;
     voisinage = portee*2+1;
@@ -25,6 +37,7 @@ void initialisation(int argc, char** argv){
 
     rule = (char*) malloc(1024);
     rule_id = 0;
+    is_random = 0;
     sprintf(rule, "%d", rule_id);
 
     initial_data();
@@ -50,7 +63,7 @@ void initialisation_opengl(int argc, char** argv){
 
     //Callback
     glutDisplayFunc(renderScene); //Lors de l'affichage
-    //glutIdleFunc(renderScene); //Idle -> quand rien ne se passe
+    glutIdleFunc(renderScene); //Idle -> quand rien ne se passe
     glutKeyboardFunc(keyboardHandler); // évenements claviers
 
     //Préparation de la texture

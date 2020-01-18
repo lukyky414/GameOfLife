@@ -1,5 +1,5 @@
 #include "affichage.cuh"
-
+#include "enregistrement.cuh"
 
 
 extern GLuint gl_pixelBufferObject;
@@ -12,6 +12,7 @@ extern unsigned long rule_id;
 extern char* rule;
 extern unsigned char voisinage, portee;
 extern unsigned long texture_width, texture_height;
+extern bool is_random;
 
 //Permet de calculer la proportion de l'image à afficher, car les coordonnées ne sont pas en pixel.
 float l, r, u, d;
@@ -96,6 +97,8 @@ void renderScene(void){
     glTexCoord2f( l, d);              glVertex2f(-1.0f,  1.0f);
 
     glEnd(); //Fin du quadrilatère
+
+    enregistrer(gl_texturePtr);
    
     //Libérer les buffer
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
@@ -110,7 +113,22 @@ void renderScene(void){
     glColor3f(1.0f, 1.0f, 1.0f);
 
     glutSwapBuffers();
-    initial_data();
+    is_random = !is_random;
+    if(is_random){
+        random_data();
+    }
+    else{
+        initial_data();
+        rule_id++;
+        if(rule_id == pow(2,voisinage)){
+            if(portee==3)
+                exit(0);
+            portee++;
+            voisinage+=2;
+            rule_id=0;
+        }
+        sprintf(rule, "%d", rule_id);
+    }
 }
 
 //Affichage d'une ligne dans le terminal
