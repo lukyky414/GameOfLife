@@ -8,6 +8,7 @@ unsigned char voisinage, portee;
 unsigned long texture_width, texture_height;
 unsigned long screen_width, screen_height;
 bool is_random;
+bool need_save;
 
 //Pour l'affichage
 GLuint gl_pixelBufferObject;
@@ -19,7 +20,6 @@ uchar4* d_textureBufferData;
 //Le reste est compile avec le compilateur de base genre gcc
 int main(int argc, char** argv) {
     initialisation(argc, argv);
-
 
     glutMainLoop();
 }
@@ -49,18 +49,18 @@ void keyboardHandler(unsigned char key, int x, int y){
         exit_function();
     }
     //Random reset
-    if(key=='r'){
+    else if(key=='r'){
         is_random = true;
         random_data();
         renderScene();
     }
     //Initial seed reset
-    if(key=='i'){
+    else if(key=='i'){
         is_random = false;
         initial_data();
         renderScene();
     }
-    if(key=='d' || key=='q'){
+    else if(key=='d' || key=='q'){
         if(key=='d'){
             rule_id++;
             if(rule_id == pow(2,pow(2,voisinage)))
@@ -81,6 +81,27 @@ void keyboardHandler(unsigned char key, int x, int y){
 
         renderScene();
 
+    }
+    else if(key=='s'){
+        enregistrer();
+    }
+    else if(key=='z'){
+        rule_id = 0;
+        sprintf(rule, "%d", rule_id);
+
+        if(is_random)
+            random_data();
+        else
+            initial_data();
+            
+        if(portee == 1){
+            portee = 2;
+            voisinage = 5;
+        }
+        else{
+            portee = 1;
+            voisinage = 3;
+        }
     }
     //TODO deplacement de la camera avec haut et bas
 }

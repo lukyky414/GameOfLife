@@ -18,6 +18,7 @@
 #include "calcul.cuh"
 #include "affichage.cuh"
 #include "initialisation.cuh"
+#include "enregistrement.cuh"
 
 
 int main(int argc, char** argv);

@@ -13,6 +13,7 @@ extern char* rule;
 extern unsigned char voisinage, portee;
 extern unsigned long texture_width, texture_height;
 extern bool is_random;
+extern bool need_save;
 
 //Permet de calculer la proportion de l'image à afficher, car les coordonnées ne sont pas en pixel.
 float l, r, u, d;
@@ -98,7 +99,8 @@ void renderScene(void){
 
     glEnd(); //Fin du quadrilatère
 
-    enregistrer(gl_texturePtr);
+    if(need_save)
+        enregistrer(gl_texturePtr);
    
     //Libérer les buffer
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
@@ -113,22 +115,10 @@ void renderScene(void){
     glColor3f(1.0f, 1.0f, 1.0f);
 
     glutSwapBuffers();
-    is_random = !is_random;
-    if(is_random){
+    if(is_random)
         random_data();
-    }
-    else{
+    else
         initial_data();
-        rule_id++;
-        if(rule_id == pow(2,voisinage)){
-            if(portee==3)
-                exit(0);
-            portee++;
-            voisinage+=2;
-            rule_id=0;
-        }
-        sprintf(rule, "%d", rule_id);
-    }
 }
 
 //Affichage d'une ligne dans le terminal
