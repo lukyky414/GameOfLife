@@ -23,7 +23,7 @@ void initialisation(int argc, char** argv){
     texture_width = 3840;
     texture_height = 2160;
     
-    portee = 1;
+    portee = 2;
     voisinage = portee*2+1;
     uint size_data = texture_width;//*sizeof(char);
     
@@ -37,7 +37,7 @@ void initialisation(int argc, char** argv){
     host_data = (unsigned char*) malloc (size_data);
 
     rule = (char*) malloc(1024);
-    rule_id = 0;
+    rule_id = 1270532393;
     is_random = false;
     need_save = false;
     sprintf(rule, "%d", rule_id);
